@@ -38,7 +38,7 @@ def unstandardizeLabels(labels):
     longtitudes = longtitudes * STD_LON + MEAN_LON
 
     labels[:, 0] = latitudes
-    longtitudes[:, 1] = longtitudes
+    labels[:, 1] = longtitudes
 
     return labels
 
@@ -60,8 +60,8 @@ def main(annotatation_path, img_dir):
     model.classifier = torch.nn.Linear(768, 2).to("cuda")
 
     criterion = torch.nn.MSELoss()
-    optimizer_transformer = torch.optim.Adam(model.base_model.parameters(), lr=5e-6)
-    optimizer_linear = torch.optim.Adam(model.classifier.parameters(), lr=1e-4)
+    optimizer_transformer = torch.optim.Adam(model.base_model.parameters(), lr=1e-5)
+    optimizer_linear = torch.optim.Adam(model.classifier.parameters(), lr=2e-4)
 
     epochs = 100
     train_losses = []
