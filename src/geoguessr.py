@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import random_split, DataLoader
-from transformers import BeitFeatureExtractor, BeitForImageClassification
+from transformers import BeitImageProcessor, BeitForImageClassification
 
 import numpy as np
 from tqdm import tqdm
@@ -79,7 +79,7 @@ def main(annotatation_path, img_dir):
     train_loader = DataLoader(train_set, batch_size=128, num_workers=4, shuffle=True, pin_memory=True)
     val_loader = DataLoader(val_set, batch_size=128, num_workers=4, shuffle=True, pin_memory=True)
 
-    feature_extractor = BeitFeatureExtractor.from_pretrained('microsoft/beit-base-patch16-384')
+    feature_extractor = BeitImageProcessor.from_pretrained('microsoft/beit-base-patch16-384')
     model = BeitForImageClassification.from_pretrained('microsoft/beit-base-patch16-384').to("cuda")
 
     model.classifier = Combined_Predictor().to("cuda")
