@@ -51,8 +51,8 @@ def main(annotatation_path, img_dir):
 
     train_set, val_set, _ = random_split(dataset, [0.6, 0.2, 0.2])
 
-    train_loader = DataLoader(train_set, batch_size=128, num_workers=4, shuffle=True, pin_memory=True)
-    val_loader = DataLoader(val_set, batch_size=128, num_workers=4, shuffle=True, pin_memory=True)
+    train_loader = DataLoader(train_set, batch_size=256, num_workers=4, shuffle=True, pin_memory=True)
+    val_loader = DataLoader(val_set, batch_size=256, num_workers=4, shuffle=True, pin_memory=True)
 
     feature_extractor = BeitFeatureExtractor.from_pretrained('microsoft/beit-base-patch16-384')
     model = BeitForImageClassification.from_pretrained('microsoft/beit-base-patch16-384').to("cuda")
@@ -60,8 +60,8 @@ def main(annotatation_path, img_dir):
     model.classifier = torch.nn.Linear(768, 2).to("cuda")
 
     criterion = torch.nn.MSELoss()
-    optimizer_transformer = torch.optim.Adam(model.base_model.parameters(), lr=1e-5)
-    optimizer_linear = torch.optim.Adam(model.classifier.parameters(), lr=2e-4)
+    optimizer_transformer = torch.optim.Adam(model.base_model.parameters(), lr=1e-5, weight_decay=1e-5)
+    optimizer_linear = torch.optim.Adam(model.classifier.parameters(), lr=1e-4, weight_decay=1e-4)
 
     epochs = 100
     train_losses = []
