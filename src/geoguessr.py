@@ -1,13 +1,15 @@
 import argparse
 
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import random_split, DataLoader
 from transformers import BeitFeatureExtractor, BeitForImageClassification
 
 import numpy as np
 from tqdm import tqdm
 
-from dataset import SingleImageDataset
+from dataset import SingleImageDataset, SingleImageWithGridDataset
 from Haversine import HaversineLoss
 
 torch.manual_seed(42)
@@ -42,12 +44,35 @@ def unstandardizeLabels(labels):
 
     return labels
 
+class Combined_Predictor(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.grid_classifier = nn.Linear(768,88)
+        self.fc1 = nn.Linear(88 + 768 , 250)
+        self.fc2 = nn.Linear(250, 150)
+        self.fc3 = nn.Linear(150, 100)
+        self.fc4 = nn.Linear(100, 80)
+        self.fc5 = nn.Linear(80,50)
+        self.output = nn.Linear(50,2)
+
+    def forward(self, x):
+        embeddings = x.clone()
+        self.grid_output = self.grid_classifier(x)
+        x = self.grid_output
+        regressor_in = torch.cat([x,embeddings], dim =1)
+        x = F.leaky_relu(self.fc1(regressor_in))
+        x = F.leaky_relu(self.fc2(x))
+        x = F.leaky_relu(self.fc3(x))
+        x = F.leaky_relu(self.fc4(x))
+        x = F.leaky_relu(self.fc5(x))
+        x = self.output(x)
+        return x
 
 def main(annotatation_path, img_dir):
     if (annotatation_path is None or img_dir is None):
-        dataset = SingleImageDataset()
+        dataset = SingleImageWithGridDataset()
     else:
-        dataset = SingleImageDataset(annotatation_path, img_dir)
+        dataset = SingleImageWithGridDataset(annotatation_path, img_dir)
 
     train_set, val_set, _ = random_split(dataset, [0.6, 0.2, 0.2])
 
@@ -57,9 +82,11 @@ def main(annotatation_path, img_dir):
     feature_extractor = BeitFeatureExtractor.from_pretrained('microsoft/beit-base-patch16-384')
     model = BeitForImageClassification.from_pretrained('microsoft/beit-base-patch16-384').to("cuda")
 
-    model.classifier = torch.nn.Linear(768, 2).to("cuda")
+    model.classifier = Combined_Predictor().to("cuda")
 
-    criterion = torch.nn.MSELoss()
+    alpha = 0.5
+    criterion1 = nn.MSELoss()
+    criterion2 = nn.CrossEntropyLoss()
     optimizer_transformer = torch.optim.Adam(model.base_model.parameters(), lr=1e-5)
     optimizer_linear = torch.optim.Adam(model.classifier.parameters(), lr=2e-4)
 
@@ -83,8 +110,9 @@ def main(annotatation_path, img_dir):
 
         for images, labels in train_loader:
             model.train()
-            labels = labels.cuda(non_blocking=True)
-            labels = standardizeLabels(labels)
+            # labels = labels.cuda(non_blocking=True)
+            labels_coord = standardizeLabels(labels[:,:2]).cuda(non_blocking=True)
+            labels_grid_id = labels[:,2].long().cuda(non_blocking=True)
             
             optimizer_transformer.zero_grad()
             optimizer_linear.zero_grad()
@@ -94,12 +122,14 @@ def main(annotatation_path, img_dir):
 
             y_pred = model(features)
 
-            loss = criterion(y_pred.logits, labels)
+            loss1 = criterion1(y_pred.logits, labels_coord)
+            loss2 = criterion2(model.classifier.grid_output, labels_grid_id)
+            loss = alpha * loss1 + (1-alpha)*loss2
             loss.backward()
             running_train_loss.append(loss.item())
 
-            y_pred, labels = unstandardizeLabels(y_pred.logits.detach()), unstandardizeLabels(labels)
-            running_train_haversine.append(haversine_metric(y_pred, labels).item())
+            y_pred_rescaled = unstandardizeLabels(y_pred.logits.detach())
+            running_train_haversine.append(haversine_metric(y_pred_rescaled, labels[:,:2]).item())
 
             optimizer_transformer.step()
             optimizer_linear.step()
@@ -119,11 +149,13 @@ def main(annotatation_path, img_dir):
 
                 y_pred = model(features)
 
-                loss = criterion(y_pred.logits, labels) 
+                loss1 = criterion1(y_pred.logits, labels_coord)
+                loss2 = criterion2(model.classifier.grid_output, labels_grid_id)
+                loss = alpha * loss1 + (1-alpha)*loss2
                 running_val_loss.append(loss.item())
 
-                y_pred, labels = unstandardizeLabels(y_pred.logits.detach()), unstandardizeLabels(labels)
-                running_val_haversine.append(haversine_metric(y_pred, labels).item())
+                running_val_haversine.append(haversine_metric(y_pred_rescaled, labels[:,:2]).item())
+                y_pred_rescaled = unstandardizeLabels(y_pred.logits.detach())
 
         val_loss = np.mean(running_val_loss)
         val_losses.append(val_loss)
