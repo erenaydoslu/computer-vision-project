@@ -47,6 +47,8 @@ def unstandardizeLabels(labels):
 class Combined_Predictor(nn.Module):
     def __init__(self):
         super().__init__()
+        self.relu = nn.LeakyReLU()
+        self.dropout = nn.Dropout()
         self.grid_classifier = nn.Linear(768,88)
         self.fc1 = nn.Linear(88 + 768 , 250)
         self.fc2 = nn.Linear(250, 150)
@@ -60,11 +62,11 @@ class Combined_Predictor(nn.Module):
         self.grid_output = self.grid_classifier(x)
         x = self.grid_output
         regressor_in = torch.cat([x,embeddings], dim =1)
-        x = F.leaky_relu(self.fc1(regressor_in))
-        x = F.leaky_relu(self.fc2(x))
-        x = F.leaky_relu(self.fc3(x))
-        x = F.leaky_relu(self.fc4(x))
-        x = F.leaky_relu(self.fc5(x))
+        x = self.relu(self.dropout((self.fc1(regressor_in))))
+        x = self.relu(self.dropout((self.fc2(x))))
+        x = self.relu(self.dropout((self.fc3(x))))
+        x = self.relu(self.dropout((self.fc4(x))))
+        x = self.relu(self.dropout((self.fc5(x))))
         x = self.output(x)
         return x
 
@@ -76,8 +78,8 @@ def main(annotatation_path, img_dir):
 
     train_set, val_set, _ = random_split(dataset, [0.6, 0.2, 0.2])
 
-    train_loader = DataLoader(train_set, batch_size=128, num_workers=4, shuffle=True, pin_memory=True)
-    val_loader = DataLoader(val_set, batch_size=128, num_workers=4, shuffle=True, pin_memory=True)
+    train_loader = DataLoader(train_set, batch_size=32, num_workers=4, shuffle=True, pin_memory=True)
+    val_loader = DataLoader(val_set, batch_size=32, num_workers=4, shuffle=True, pin_memory=True)
 
     feature_extractor = BeitImageProcessor.from_pretrained('microsoft/beit-base-patch16-384')
     model = BeitForImageClassification.from_pretrained('microsoft/beit-base-patch16-384').to("cuda")
@@ -88,7 +90,7 @@ def main(annotatation_path, img_dir):
     criterion1 = nn.MSELoss()
     criterion2 = nn.CrossEntropyLoss()
     optimizer_transformer = torch.optim.Adam(model.base_model.parameters(), lr=1e-5)
-    optimizer_linear = torch.optim.Adam(model.classifier.parameters(), lr=2e-4)
+    optimizer_linear = torch.optim.Adam(model.classifier.parameters(), lr=2e-4, weight_decay=0.01)
 
     epochs = 100
     train_losses = []
@@ -108,9 +110,9 @@ def main(annotatation_path, img_dir):
         running_train_haversine = []
         running_val_haversine = []
 
-        for images, labels in train_loader:
+        for images, labels in tqdm(train_loader, total=len(train_set) / train_loader.batch_size):
             model.train()
-            # labels = labels.cuda(non_blocking=True)
+            labels = labels.cuda(non_blocking=True)
             labels_coord = standardizeLabels(labels[:,:2]).cuda(non_blocking=True)
             labels_grid_id = labels[:,2].long().cuda(non_blocking=True)
             
@@ -184,6 +186,7 @@ def main(annotatation_path, img_dir):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Train your model.')
+    torch.cuda.empty_cache()
 
     # Add arguments
     parser.add_argument('--annotation_path', type=str, default=None, help='Path to the annotation file')
