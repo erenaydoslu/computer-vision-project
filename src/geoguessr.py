@@ -59,13 +59,13 @@ class Combined_Predictor(nn.Module):
     def __init__(self):
         super().__init__()
         self.relu = nn.LeakyReLU()
-        self.dropout = nn.Dropout()
+        self.dropout = nn.Dropout(p=0.3)
         self.grid_classifier = nn.Linear(768, 88)
         self.fc1 = nn.Linear(88 + 768, 250)
-        # self.fc2 = nn.Linear(250, 150)
-        # self.fc3 = nn.Linear(150, 100)
-        self.fc4 = nn.Linear(250, 100)
-        self.fc5 = nn.Linear(100, 50)
+        self.fc2 = nn.Linear(250, 150)
+        self.fc3 = nn.Linear(150, 100)
+        self.fc4 = nn.Linear(100, 80)
+        self.fc5 = nn.Linear(80, 50)
         self.output = nn.Linear(50, 2)
 
     def forward(self, x):
@@ -76,12 +76,12 @@ class Combined_Predictor(nn.Module):
         regressor_in = torch.cat([x, embeddings], dim=1)
 
         x = self.relu(self.dropout((self.fc1(regressor_in))))
-        # x = self.relu(self.dropout((self.fc2(x))))
-        # x = self.relu(self.dropout((self.fc3(x))))
-        # x = self.relu(self.dropout((self.fc4(x))))
+        x = self.relu(self.dropout((self.fc2(x))))
+        x = self.relu(self.dropout((self.fc3(x))))
+        x = self.relu(self.dropout((self.fc4(x))))
         # x = self.relu((self.fc2(x)))
         # x = self.relu((self.fc3(x)))
-        x = self.relu((self.fc4(x)))
+        # x = self.relu((self.fc4(x)))
         x = self.relu(self.dropout((self.fc5(x))))
         x = self.output(x)
         return x
@@ -165,7 +165,7 @@ def main(annotatation_path: str, img_dir: str):
         ):
             model.train()
             labels = labels.cuda(non_blocking=True)
-            labels_coord = standardizeLabels(labels[:, :2]).cuda(non_blocking=True)
+            labels_coord = standardizeLabels(labels)[:,:2]
             labels_grid_id = labels[:, 2].long().cuda(non_blocking=True)
 
             optimizer_transformer.zero_grad()
@@ -185,8 +185,9 @@ def main(annotatation_path: str, img_dir: str):
             class_train_loss.append(loss2.item())
 
             y_pred_rescaled = unstandardizeLabels(y_pred.logits.detach())
+            labels_coord_rescaled = unstandardizeLabels(labels_coord)
             running_train_haversine.append(
-                haversine_metric(y_pred_rescaled, labels[:, :2]).item()
+                haversine_metric(y_pred_rescaled, labels_coord_rescaled).item()
             )
 
             optimizer_transformer.step()
@@ -206,7 +207,7 @@ def main(annotatation_path: str, img_dir: str):
             with torch.no_grad():
                 model.eval()
                 labels = labels.cuda(non_blocking=True)
-                labels_coord = standardizeLabels(labels[:, :2]).cuda(non_blocking=True)
+                labels_coord = standardizeLabels(labels)[:,:2]
                 labels_grid_id = labels[:, 2].long().cuda(non_blocking=True)
 
                 features = feature_extractor(images, return_tensors="pt")
@@ -222,8 +223,9 @@ def main(annotatation_path: str, img_dir: str):
                 class_val_loss.append(loss2.item())
 
                 y_pred_rescaled = unstandardizeLabels(y_pred.logits.detach())
+                labels_coord_rescaled = unstandardizeLabels(labels_coord)
                 running_val_haversine.append(
-                    haversine_metric(y_pred_rescaled, labels[:, :2]).item()
+                    haversine_metric(y_pred_rescaled, labels_coord_rescaled).item()
                 )
 
         val_loss = np.mean(running_val_loss)
@@ -243,6 +245,7 @@ def main(annotatation_path: str, img_dir: str):
         print(
             f"Coordinates:   Train Loss: {train_coord_loss:.2f}, Val Loss: {val_coord_loss:.2f}"
         )
+        print(f"Distance: Train: {train_haversine[-1]}, Val: {val_haversine[-1]}")
 
         torch.save(
             {
