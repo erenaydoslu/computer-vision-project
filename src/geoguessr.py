@@ -23,12 +23,6 @@ torchvision.disable_beta_transforms_warning()
 
 torch.manual_seed(42)
 
-MEAN_LAT = 45.6653417
-MEAN_LON = 7.9323727
-STD_LAT = 4.6619749
-STD_LON = 9.3488671
-
-
 def standardizeLabels(labels):
     latitudes = labels[:, 0]
     longtitudes = labels[:, 1]
@@ -64,8 +58,8 @@ class Combined_Predictor(nn.Module):
         self.fc1 = nn.Linear(88 + 768, 250)
         self.fc2 = nn.Linear(250, 150)
         self.fc3 = nn.Linear(150, 100)
-        self.fc4 = nn.Linear(100, 80)
-        self.fc5 = nn.Linear(80, 50)
+        # self.fc4 = nn.Linear(100, 80)
+        self.fc5 = nn.Linear(100, 50)
         self.output = nn.Linear(50, 2)
 
     def forward(self, x):
@@ -76,31 +70,34 @@ class Combined_Predictor(nn.Module):
         regressor_in = torch.cat([x, embeddings], dim=1)
 
         x = self.relu(self.dropout((self.fc1(regressor_in))))
-        x = self.relu(self.dropout((self.fc2(x))))
-        x = self.relu(self.dropout((self.fc3(x))))
-        x = self.relu(self.dropout((self.fc4(x))))
-        # x = self.relu((self.fc2(x)))
-        # x = self.relu((self.fc3(x)))
+        # x = self.relu(self.dropout((self.fc2(x))))
+        # x = self.relu(self.dropout((self.fc3(x))))
+        # x = self.relu(self.dropout((self.fc4(x))))
+        x = self.relu((self.dropout(self.fc2(x))))
+        x = self.relu((self.dropout(self.fc3(x))))
         # x = self.relu((self.fc4(x)))
         x = self.relu(self.dropout((self.fc5(x))))
         x = self.output(x)
         return x
+
+def init_weights(m):
+    if isinstance(m, nn.Linear):
+        torch.nn.init.xavier_uniform(m.weight)
+        m.bias.data.fill_(0.01)
 
 no_tqdm=False
 
 def main(annotatation_path: str, img_dir: str):
     global MEAN_LAT, MEAN_LON, STD_LAT, STD_LON
     sample_type = annotatation_path[:-4].split("_")[-1]
+    data_dir = annotatation_path.split("/")[0]
+
     transform = v2.RandomHorizontalFlip(p=0.5)
     timestamp = datetime.now().strftime("%d:%m:%Y:%H:%M:%S")
 
-
-    if annotatation_path is None or img_dir is None:
-        dataset = FullLocationWithGridDataset(transform=transform)
-    else:
-        dataset = FullLocationWithGridDataset(annotatation_path, img_dir, transform=transform)
-
-    train_set, val_set, test_set = stratifiedSplit(dataset, (0.8, 0.1, 0.1))
+    dataset = torch.load(f"{data_dir}/dataset.pt")
+    train_set, val_set, test_set = dataset["train_set"], dataset["val_set"], dataset["test_set"]
+    MEAN_LON, MEAN_LAT, STD_LON, STD_LAT = dataset["stats"]
 
     train_loader = DataLoader(
         train_set, batch_size=16, num_workers=4, shuffle=True, pin_memory=True, generator=torch.manual_seed(42)
@@ -109,7 +106,6 @@ def main(annotatation_path: str, img_dir: str):
         val_set, batch_size=16, num_workers=4, shuffle=True, pin_memory=True, generator=torch.manual_seed(42)
     )
 
-    MEAN_LON, MEAN_LAT, STD_LON, STD_LAT = calculateStats(train_loader)
 
     feature_extractor = BeitImageProcessor.from_pretrained(
         "microsoft/beit-base-patch16-384"
@@ -119,20 +115,21 @@ def main(annotatation_path: str, img_dir: str):
     ).to("cuda")
 
     model.classifier = Combined_Predictor().to("cuda")
+    model.classifier.apply(init_weights)
 
-    alpha = 0.3
-    criterion1 = nn.L1Loss()
+    alpha = 0.2
+    criterion1 = nn.MSELoss()
     criterion2 = nn.CrossEntropyLoss()
     optimizer_transformer = torch.optim.Adam(
-        model.base_model.parameters(), lr=5e-6, weight_decay=0.01, betas=(0.9, 0.999)
+        model.base_model.parameters(), lr=1e-5, weight_decay=0.01, betas=(0.9, 0.999)
     )
     optimizer_linear = torch.optim.Adam(
         model.classifier.parameters(), lr=2e-4, weight_decay=0.01, betas=(0.9, 0.999)
     )
     scheduler_transformer = ReduceLROnPlateau(
-        optimizer_transformer, factor=0.5, patience=2
+        optimizer_transformer, factor=0.2, patience=2
     )
-    scheduler_linear = ReduceLROnPlateau(optimizer_linear, factor=0.5, patience=2)
+    scheduler_linear = ReduceLROnPlateau(optimizer_linear, factor=0.2, patience=2)
 
     epochs = 100
     train_losses = []
@@ -260,7 +257,9 @@ def main(annotatation_path: str, img_dir: str):
                 "val_coord_losses": val_coord_losses,
                 "train_haversine": train_haversine,
                 "val_haversine": val_haversine,
-                "test_set": test_set,
+                "train_set": train_set,
+                "val_set": val_set,
+                "test_set": test_set
             },
             f"models/model_{sample_type}_{timestamp}_epoch_{epoch}.pt",
         )

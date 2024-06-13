@@ -98,5 +98,4 @@ def calculateStats(dataloader):
     var_lon = sum_sq_lon / (n - 1)
     var_lat = sum_sq_lat / (n - 1)
 
-    print(mean_lon, mean_lat, var_lon**0.5, var_lat**0.5)
     return mean_lon, mean_lat, var_lon**0.5, var_lat**0.5
