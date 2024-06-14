@@ -14,7 +14,7 @@ from tqdm.auto import tqdm
 from transformers import BeitForImageClassification, BeitImageProcessor
 
 from dataset import FullLocationWithGridDataset, stratifiedSplit, calculateStats
-from Haversine import HaversineLoss
+from Haversine import HaversineLoss, EquiRectLoss
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message="TypedStorage is deprecated"
@@ -82,7 +82,7 @@ class Combined_Predictor(nn.Module):
 
 def init_weights(m):
     if isinstance(m, nn.Linear):
-        torch.nn.init.xavier_uniform(m.weight)
+        torch.nn.init.xavier_uniform_(m.weight)
         m.bias.data.fill_(0.01)
 
 no_tqdm=False
@@ -92,7 +92,6 @@ def main(annotatation_path: str, img_dir: str):
     sample_type = annotatation_path[:-4].split("_")[-1]
     data_dir = annotatation_path.split("/")[0]
 
-    transform = v2.RandomHorizontalFlip(p=0.5)
     timestamp = datetime.now().strftime("%d:%m:%Y:%H:%M:%S")
 
     dataset = torch.load(f"{data_dir}/dataset.pt")
@@ -117,8 +116,9 @@ def main(annotatation_path: str, img_dir: str):
     model.classifier = Combined_Predictor().to("cuda")
     model.classifier.apply(init_weights)
 
-    alpha = 0.2
-    criterion1 = nn.MSELoss()
+    alpha1 = 0.05
+    alpha2 = 1.
+    criterion1 = EquiRectLoss()
     criterion2 = nn.CrossEntropyLoss()
     optimizer_transformer = torch.optim.Adam(
         model.base_model.parameters(), lr=1e-5, weight_decay=0.01, betas=(0.9, 0.999)
@@ -162,8 +162,8 @@ def main(annotatation_path: str, img_dir: str):
         ):
             model.train()
             labels = labels.cuda(non_blocking=True)
-            labels_coord = standardizeLabels(labels)[:,:2]
-            labels_grid_id = labels[:, 2].long().cuda(non_blocking=True)
+            labels_coord = labels[:,:2]
+            labels_grid_id = labels[:, 2].long()
 
             optimizer_transformer.zero_grad()
             optimizer_linear.zero_grad()
@@ -172,19 +172,18 @@ def main(annotatation_path: str, img_dir: str):
             features = features["pixel_values"].cuda(non_blocking=True)
 
             y_pred = model(features)
+            y_pred_rescaled = unstandardizeLabels(y_pred.logits)
 
-            loss1 = criterion1(y_pred.logits, labels_coord)
+            loss1 = criterion1(y_pred_rescaled, labels_coord)
             loss2 = criterion2(model.classifier.grid_output, labels_grid_id)
-            loss = alpha * loss1 + (1 - alpha) * loss2
+            loss = alpha1 * loss1 + alpha2 * loss2
             loss.backward()
             running_train_loss.append(loss.item())
             coord_train_loss.append(loss1.item())
             class_train_loss.append(loss2.item())
 
-            y_pred_rescaled = unstandardizeLabels(y_pred.logits.detach())
-            labels_coord_rescaled = unstandardizeLabels(labels_coord)
             running_train_haversine.append(
-                haversine_metric(y_pred_rescaled, labels_coord_rescaled).item()
+                haversine_metric(y_pred_rescaled.detach(), labels_coord).item()
             )
 
             optimizer_transformer.step()
@@ -204,25 +203,24 @@ def main(annotatation_path: str, img_dir: str):
             with torch.no_grad():
                 model.eval()
                 labels = labels.cuda(non_blocking=True)
-                labels_coord = standardizeLabels(labels)[:,:2]
-                labels_grid_id = labels[:, 2].long().cuda(non_blocking=True)
+                labels_coord = labels[:,:2]
+                labels_grid_id = labels[:, 2].long()
 
                 features = feature_extractor(images, return_tensors="pt")
                 features = features["pixel_values"].cuda(non_blocking=True)
 
                 y_pred = model(features)
+                y_pred_rescaled = unstandardizeLabels(y_pred.logits.detach())
 
-                loss1 = criterion1(y_pred.logits, labels_coord)
+                loss1 = criterion1(y_pred_rescaled, labels_coord)
                 loss2 = criterion2(model.classifier.grid_output, labels_grid_id)
-                loss = alpha * loss1 + (1 - alpha) * loss2
+                loss = alpha1 * loss1 + alpha2 * loss2
                 running_val_loss.append(loss.item())
                 coord_val_loss.append(loss1.item())
                 class_val_loss.append(loss2.item())
 
-                y_pred_rescaled = unstandardizeLabels(y_pred.logits.detach())
-                labels_coord_rescaled = unstandardizeLabels(labels_coord)
                 running_val_haversine.append(
-                    haversine_metric(y_pred_rescaled, labels_coord_rescaled).item()
+                    haversine_metric(y_pred_rescaled, labels_coord).item()
                 )
 
         val_loss = np.mean(running_val_loss)

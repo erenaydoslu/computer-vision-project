@@ -26,10 +26,10 @@ def haversine_distance(lat1, lon1, lat2, lon2):
 
 def equirectangular_distance(lat1, lon1, lat2, lon2):
     # Convert latitude and longitude from degrees to radians using torch
-    lat1 = torch.deg2rad(torch.tensor(lat1))
-    lon1 = torch.deg2rad(torch.tensor(lon1))
-    lat2 = torch.deg2rad(torch.tensor(lat2))
-    lon2 = torch.deg2rad(torch.tensor(lon2))
+    lat1 = torch.deg2rad(lat1)
+    lon1 = torch.deg2rad(lon1)
+    lat2 = torch.deg2rad(lat2)
+    lon2 = torch.deg2rad(lon2)
     
     # Earth's radius in kilometers
     R = 6371.0
